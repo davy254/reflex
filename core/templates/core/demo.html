@@ -11,15 +11,16 @@
 
 <header class="bg-slate-900 text-white px-6 py-3 flex items-center justify-between sticky top-0 z-10">
   <h1 class="text-xl font-bold">⚡ Reflex <span class="text-slate-400 font-normal text-sm">— retailer · dispatcher · riders · SMS, one live page</span></h1>
-  <div class="flex items-center gap-2 text-sm">
+  <div class="flex items-center gap-3 text-sm">
+    <!-- NEW: Global Offline Queue Indicator -->
+    <div id="queue-badge" class="hidden bg-amber-500 text-white px-3 py-1 rounded-full text-xs font-bold animate-pulse shadow-lg">
+      ⏳ <span id="queue-count">0</span> updates queued
+    </div>
     <span id="ws-dot" class="w-3 h-3 rounded-full bg-red-500"></span><span id="ws-label">connecting…</span>
   </div>
 </header>
 
-<!-- 5 Columns on XL screens: Retailer, Dispatcher, Rider1, Rider2, Phone/Traffic -->
 <main class="p-4 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-5 gap-4 items-start">
-
-  <!-- ============ RETAILER ============ -->
   <section class="bg-white rounded-xl shadow p-4 space-y-3">
     <h2 class="font-bold text-lg">🛍️ Retailer</h2>
     <form id="new-delivery-form" class="grid gap-2 text-sm">
@@ -33,7 +34,6 @@
     <div id="retailer-list" class="space-y-3 overflow-y-auto max-h-[55vh] pr-1"></div>
   </section>
 
-  <!-- ============ DISPATCHER ============ -->
   <section class="bg-white rounded-xl shadow p-4 space-y-3">
     <h2 class="font-bold text-lg">🎛️ Dispatcher</h2>
     <h3 class="text-xs font-bold text-slate-500 uppercase">Pending queue (real-time)</h3>
@@ -44,11 +44,9 @@
     <div id="audit-list"></div>
   </section>
 
-  <!-- ============ RIDERS ============ -->
   <section class="bg-white rounded-xl shadow p-4"><h2 class="font-bold text-lg mb-2">🏍️ Rider 1</h2><div id="list-rider1" class="space-y-2 max-h-[70vh] overflow-y-auto"></div></section>
   <section class="bg-white rounded-xl shadow p-4"><h2 class="font-bold text-lg mb-2">🏍️ Rider 2</h2><div id="list-rider2" class="space-y-2 max-h-[70vh] overflow-y-auto"></div></section>
 
-  <!-- ============ CUSTOMER PHONE + WS TRAFFIC (Now in 5th column) ============ -->
   <section class="space-y-4">
     <div class="bg-slate-900 rounded-[2rem] p-3 shadow-xl">
       <div id="sms-screen" class="bg-slate-800 rounded-2xl p-3 h-[430px] overflow-y-auto flex flex-col gap-2">
@@ -65,7 +63,6 @@
 
 <script>
 const state = { deliveries: [], sms: [] };
-// UPDATED: Removed rider3 from the array so the JS doesn't crash looking for the removed HTML column
 const RIDERS = ["rider1", "rider2"]; 
 const COLORS = {PENDING:"bg-amber-100 text-amber-800", ASSIGNED:"bg-blue-100 text-blue-800",
   PICKED_UP:"bg-violet-100 text-violet-800", DELIVERED:"bg-green-100 text-green-800",
@@ -73,8 +70,51 @@ const COLORS = {PENDING:"bg-amber-100 text-amber-800", ASSIGNED:"bg-blue-100 tex
 const chip  = s => `<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${COLORS[s]||""}">${s.replace("_"," ")}</span>`;
 const empty = t => `<p class="text-xs text-slate-400">${t}</p>`;
 
-/* ---------- helpers ---------- */
+/* --- NEW: Offline Queue Setup --- */
+const offlineQueue = [];
+let isSyncing = false;
+
+function updateQueueUI() {
+  const badge = document.getElementById("queue-badge");
+  const count = document.getElementById("queue-count");
+  if (offlineQueue.length > 0) {
+    badge.classList.remove("hidden");
+    count.textContent = offlineQueue.length;
+  } else {
+    badge.classList.add("hidden");
+  }
+}
+
+// Triggered automatically when the browser detects internet is back
+window.addEventListener('online', drainQueue);
+
+async function drainQueue() {
+  if (isSyncing || offlineQueue.length === 0) return;
+  isSyncing = true;
+  console.log(`🔄 Syncing ${offlineQueue.length} offline updates...`);
+
+  while (offlineQueue.length > 0 && navigator.onLine) {
+    const task = offlineQueue[0]; // Peek at the oldest item
+    try {
+      const res = await fetch(task.url, {method:"POST", headers:{"X-CSRFToken": csrfToken()}, body:task.fd});
+      const j = await res.json();
+      if (j.ok) {
+        offlineQueue.shift(); // Success! Remove from queue
+      } else {
+        console.error("Server rejected queued action:", j.error);
+        offlineQueue.shift(); // Remove bad data so it doesn't block the queue
+      }
+    } catch (err) {
+      break; // Network failed again, wait for the next 'online' event
+    }
+  }
+  isSyncing = false;
+  updateQueueUI();
+}
+/* --------------------------------- */
+
 function csrfToken(){ const m = document.cookie.match(/csrftoken=([^;]+)/); return m ? m[1] : ""; }
+
 function post(url, data){
   const fd = new FormData();
   Object.entries(data).forEach(([k,v]) => fd.append(k,v));
@@ -82,14 +122,14 @@ function post(url, data){
     .then(r => r.json()).then(j => { if(!j.ok) alert(j.error || "Error"); });
 }
 
-/* ---------- WebSocket with REST fallback on reconnect (from the design doc) ---------- */
 let ws;
 function connectWS(){
   ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/demo/");
   ws.onopen = () => {
     document.getElementById("ws-dot").className = "w-3 h-3 rounded-full bg-green-500";
     document.getElementById("ws-label").textContent = "live (WebSocket)";
-    loadState();                                   // refetch truth on every (re)connect
+    loadState();
+    drainQueue(); // Also try to sync when WebSocket connects!
   };
   ws.onclose = () => {
     document.getElementById("ws-dot").className = "w-3 h-3 rounded-full bg-red-500";
@@ -98,13 +138,13 @@ function connectWS(){
   };
   ws.onmessage = e => handle(JSON.parse(e.data));
 }
+
 function loadState(){
   fetch("/api/state/").then(r => r.json()).then(s => {
     state.deliveries = s.deliveries; state.sms = s.sms; renderAll(); renderPhone();
   });
 }
 
-/* ---------- event handling ---------- */
 function handle(msg){
   logTraffic(msg);
   if (msg.kind === "sms_queued"){ state.sms.push(msg.sms); renderPhone(); }
@@ -115,6 +155,7 @@ function handle(msg){
     renderAll();
   }
 }
+
 function logTraffic(msg){
   const el = document.getElementById("traffic-list");
   const line = document.createElement("div");
@@ -124,7 +165,6 @@ function logTraffic(msg){
   while (el.children.length > 8) el.removeChild(el.lastChild);
 }
 
-/* ---------- renderers ---------- */
 function renderAll(){ renderRetailer(); renderDispatcher(); renderRiders(); renderAudit(); }
 
 function renderRetailer(){
@@ -194,9 +234,7 @@ function renderRiders(){
 
 function renderPhone(){
   const screen = document.getElementById("sms-screen");
-  // UPDATED: Reverse the array so the newest messages render at the top
   const reversedSms = [...state.sms].reverse();
-  
   document.getElementById("sms-list").innerHTML = reversedSms.map(s => `
     <div class="bg-slate-700 rounded-2xl rounded-tl-none p-2 text-xs text-white max-w-[92%]">
       <div class="text-[10px] text-slate-400">SMS to ${s.phone}</div>
@@ -205,22 +243,48 @@ function renderPhone(){
         ${s.status === "sent" ? "✓✓ delivered" : "⏳ queued (outbox)…"}
       </div>
     </div>`).join("") || `<p class="text-xs text-slate-500 text-center py-8">Customer SMS messages<br>appear here at PICKED UP<br>and DELIVERED.</p>`;
-    
-  // UPDATED: Scroll to the top (0) so the newest message is immediately visible
   screen.scrollTop = 0;
 }
 
-/* ---------- actions ---------- */
 function assign(id){ post("/api/assign/", {delivery_id: id, rider: document.getElementById("sel-" + id).value}); }
 function fillScan(id, token){ document.getElementById("scan-" + id).value = token; }
+
+/* --- MODIFIED: advance() now uses Optimistic UI and the Queue --- */
 function advance(id, rider, action){
   const data = {delivery_id: id, rider: rider, action: action};
   if (action === "DELIVERED"){
     data.photo = document.getElementById("photo-" + id).checked ? "1" : "0";
     data.scan_token = document.getElementById("scan-" + id).value;
   }
-  post("/api/advance/", data);
+
+  // 1. OPTIMISTIC UI: Update local state immediately so the rider sees progress instantly
+  const delivery = state.deliveries.find(d => d.id === id);
+  if (delivery) {
+    delivery.status = action; 
+    renderRiders(); // Re-render the UI right now!
+  }
+
+  // 2. Try to send to server. If offline, add to queue.
+  const fd = new FormData();
+  Object.entries(data).forEach(([k,v]) => fd.append(k,v));
+
+  if (!navigator.onLine) {
+    offlineQueue.push({url: "/api/advance/", fd: fd});
+    updateQueueUI();
+    return;
+  }
+
+  fetch("/api/advance/", {method:"POST", headers:{"X-CSRFToken": csrfToken()}, body:fd})
+    .then(r => r.json())
+    .then(j => { if(!j.ok) alert(j.error || "Error"); })
+    .catch(() => {
+      // Network failed mid-request. Queue it.
+      offlineQueue.push({url: "/api/advance/", fd: fd});
+      updateQueueUI();
+    });
 }
+/* ------------------------------------------------------------------- */
+
 document.getElementById("new-delivery-form").addEventListener("submit", e => {
   e.preventDefault();
   const f = e.target;
