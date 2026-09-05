@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from django.http import JsonResponse
+from django.http import JsonResponse , HttpResponse 
 from django.shortcuts import render, get_object_or_404
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
@@ -8,16 +8,22 @@ from .models import DeliveryRequest, StatusEvent, Notification
 from .realtime import broadcast_to
 from . import sms_worker
 
+DEMO_USERS = ["retailer", "dispatcher", "rider1", "rider2", "rider3"]
 
 def ensure_users():
-    """Auto-create the demo accounts on first page load (no manual setup)."""
-    for username, role in [("retailer", "retailer_staff"), ("dispatcher", "dispatcher"),
-                           ("rider1", "rider"), ("rider2", "rider"), ("rider3", "rider")]:
-        user, created = User.objects.get_or_create(username=username)
-        if created:
-            user.set_password("demo123")
+    """Create demo accounts once. Unusable passwords = instant (no hashing)."""
+    existing = set(
+        User.objects.filter(username__in=DEMO_USERS).values_list("username", flat=True)
+    )
+    for username in DEMO_USERS:
+        if username not in existing:
+            user = User(username=username)
+            user.set_unusable_password()   # instant — demo users never log in
             user.save()
 
+def health(request):
+    """Lightweight health check for Render. No DB seeding, no templates."""
+    return HttpResponse("ok", content_type="text/plain")
 
 def serialize_delivery(d):
     return {
