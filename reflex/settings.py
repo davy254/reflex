@@ -27,6 +27,13 @@ DEBUG = True
 
 ALLOWED_HOSTS = ["*"]
 
+# Tell Django that requests coming from Render (and your local machine) are safe
+CSRF_TRUSTED_ORIGINS = [
+    'https://*.onrender.com',   # Allows any subdomain on Render
+    'http://127.0.0.1:8000',    # Allows your local testing
+    'http://localhost:8000',    # Allows your local testing
+]
+
 # Application definition
 
 INSTALLED_APPS = [
