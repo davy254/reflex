@@ -77,7 +77,7 @@ This prototype is designed to run with zero external dependencies (uses SQLite a
 
 1. **Clone the repository and navigate to the project:**
    ```bash
-   cd reflex-proto
+   cd reflex
    ```
 
 
