@@ -85,8 +85,23 @@ function updateQueueUI() {
   }
 }
 
-// Triggered automatically when the browser detects internet is back
-window.addEventListener('online', drainQueue);
+// --- Robust connection monitoring ---
+function setDotOffline() {
+    document.getElementById("ws-dot").className = "w-3 h-3 rounded-full bg-red-500";
+    document.getElementById("ws-label").textContent = "offline";
+}
+
+// 1. Event-based (fires instantly when it works)
+window.addEventListener('offline', setDotOffline);
+window.addEventListener('online', () => {
+    if (!ws || ws.readyState === WebSocket.CLOSED) connectWS();
+    drainQueue();
+});
+
+// 2. Polling safety-net (catches DevTools "Offline" which skips the event)
+setInterval(() => {
+    if (!navigator.onLine) setDotOffline();
+}, 1000);
 
 async function drainQueue() {
   if (isSyncing || offlineQueue.length === 0) return;
