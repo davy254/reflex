@@ -25,4 +25,5 @@ urlpatterns = [
     path("api/create/", views.create_delivery),
     path("api/assign/", views.assign_rider),
     path("api/advance/", views.advance_status),
+    path("health/", views.health),
 ]
